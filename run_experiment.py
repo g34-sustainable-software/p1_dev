@@ -2,54 +2,67 @@
 import asyncio
 import argparse
 import random
+import os
 from playwright.async_api import async_playwright
 
-VIDEO_URL = "https://www.youtube.com/watch?v=cdKop6aixVE"  # up to 4k, no ads
-EXPERIMENT_DURATION = 10 # how long the video should play in the experiment (in seconds) # TODO - set a real duration
-QUALITIES = [480, 2160]
+VIDEO_URL = "https://www.youtube.com/watch?v=d4u4cgxTShU"  # up to 4k, no ads
+EXPERIMENT_DURATION = 60  # how long the video should play in the experiment (in seconds)
 
+SETTINGS = ["all-off", "stable-volume", "voice-boost", "ambient-mode"]
 
 """
-Under target/release add the energibridge executable (cargo build -- release) so we can call the command
-example run:
-python run_experiment.py --qualities 480 2160
+Under target/release add the energibridge executable (cargo build --release) so we can call the command
+
+Example run:
+python run_experiment.py --setting ambient-mode
+or
+python run_experiment.py --setting all-off stable-volume voice-boost ambient-mode
 """
 
 
-async def run_all_iterations():
-    # represent each iteration with a list entry
-    quality_list = []
-    for q in QUALITIES:
-        quality_list.extend([q] * 2) # this is only 2 for testing, should be 30
-    print("qualities are" + str(quality_list))
+async def run_all_iterations(settings: list[str]):
+    settings_list = []
+    for s in settings:
+        settings_list.extend([s] * 3)  # this is only 3 for testing, should be 30 # TODO
 
-    # randomly choose between the two cases
-    random.shuffle(quality_list)
+    random.shuffle(settings_list)
 
-    for i, quality in enumerate(quality_list, start=1):
-        output_file = f"./results/q{quality}/run_{i:02d}.csv"
-        print(f"\n=== Run {i} | Quality {quality}p ===")
-        await run_experiment(quality, output_file)
-        print(f"\n=== Finished, sleeping in between")
-        await asyncio.sleep(10000)
+    print("Settings are: " + str(settings_list))
+
+    for i, s in enumerate(settings_list, start=1):
+        output_file = f"./results/{s}/run_{i:02d}.csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        print(f"\n=== Run {i} | Setting: {s} ===")
+        await run_experiment(s, output_file)
+        print(f"\n=== Finished, sleeping in between ===")
+        await asyncio.sleep(10) # should ne 30 TODO
 
 
-async def run_experiment(quality, output_file):
+async def run_experiment(setting: str, output_file: str):
     playwright = await async_playwright().start()
 
     browser = await playwright.chromium.launch(
         headless=False,
+        channel="chrome",
         args=[
             "--autoplay-policy=no-user-gesture-required",
             "--incognito",
+            "--disable-blink-features=AutomationControlled",
         ],
     )
 
-    # incognito context with cache disabled
     context = await browser.new_context(
-        viewport={"width": 1512, "height": 982},  # macbook 14 size
+        viewport={"width": 1512, "height": 982},
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
     )
-    await context.set_extra_http_headers({"Cache-Control": "no-cache"})
+
+    # dark mode needed for ambient mode
+    await context.add_cookies([{
+        "name": "PREF",
+        "value": "tz=Europe.Amsterdam&f6=400",
+        "domain": ".youtube.com",
+        "path": "/",
+    }])
 
     page = await context.new_page()
     print("Browser ready")
@@ -73,38 +86,22 @@ async def run_experiment(quality, output_file):
     await page.wait_for_timeout(3000)
     print("Video loaded")
 
-    # set quality
-    await page.mouse.move(960, 540)
-    await page.wait_for_timeout(1000)
-    await page.locator('button.ytp-settings-button').hover()
-    await page.wait_for_timeout(500)
-    await page.locator('button.ytp-settings-button').click()
-    await page.wait_for_timeout(1000)
-    await page.click('div.ytp-menuitem-label:has-text("Quality")')
-    await page.wait_for_timeout(1000)
+    # apply settings
+    await apply_settings(page, setting)
+    print(f"Setting set to: {setting}")
 
-    await page.click(f'div.ytp-menuitem-label:has-text("{quality}")')
-    await page.wait_for_timeout(1000)
-
-    print(f"Quality set to {quality}p")
-
-    # enter fullscreen
-    await page.keyboard.press('f')
-    await page.wait_for_timeout(1000)
-
-    # click play
-    await page.locator('button.ytp-play-button').click()
+    # make sure video is playing
+    play_btn = page.locator('button.ytp-play-button')
+    aria_label = await play_btn.get_attribute('aria-label')
+    if aria_label and 'Play' in aria_label:
+        await play_btn.click()
     await page.wait_for_timeout(3000)
 
     print("Playing... -> Ready to start measuring!!")
 
     # measurement
-    print(f"Measuring {EXPERIMENT_DURATION}s at {quality}p...")
-
-    # start measurement with release
+    print(f"Measuring {EXPERIMENT_DURATION}s at setting '{setting}'...")
     await start_energibridge(output_file)
-
-    await page.wait_for_timeout(EXPERIMENT_DURATION * 1000)
 
     print("Measurement done.")
 
@@ -115,7 +112,45 @@ async def run_experiment(quality, output_file):
     print("Browser closed")
 
 
-async def start_energibridge(output):
+async def toggle_setting(page, label: str, enable: bool):
+
+    menu_item = page.locator(f'div.ytp-menuitem:has(div.ytp-menuitem-label:has-text("{label}"))')
+    await menu_item.wait_for(state="visible", timeout=10000)
+
+    is_checked = await menu_item.get_attribute('aria-checked')
+    currently_on = is_checked == 'true'
+
+    if enable != currently_on:
+        print(f"{'Enabling' if enable else 'Disabling'} '{label}'")
+        await menu_item.click()
+        await page.wait_for_timeout(500)
+    else:
+        print(f"'{label}' already {'on' if currently_on else 'off'}, skipping")
+
+
+async def apply_settings(page, setting: str):
+
+    await page.mouse.move(960, 540)
+    await page.wait_for_timeout(500)
+    settings_btn = page.locator('button.ytp-settings-button')
+    await settings_btn.wait_for(state="visible", timeout=10000)
+    await settings_btn.click()
+    await page.wait_for_timeout(1000)
+
+    menu = page.locator('div.ytp-settings-menu')
+    await menu.wait_for(state="visible", timeout=10000)
+
+    # set each setting individually to a needed value
+    await toggle_setting(page, "Stable Volume", setting == "stable-volume")
+    await toggle_setting(page, "Voice Boost", setting == "voice-boost")
+    await toggle_setting(page, "Ambient Mode", setting == "ambient-mode")
+
+    # Close menu when done
+    await page.keyboard.press('Escape')
+    await menu.wait_for(state="hidden", timeout=5000)
+    await page.wait_for_timeout(500)
+
+async def start_energibridge(output: str):
     print("Starting energibridge.")
     process = await asyncio.create_subprocess_exec(
         "target/release/energibridge",
@@ -128,11 +163,7 @@ async def start_energibridge(output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--qualities", nargs="+", type=int, required=True) # f.e. 480 2160
-
-    # old output file argument, currently not used
-    parser.add_argument("--output", required=False) # f.e. ./results/q480/run_01.csv
-
+    parser.add_argument("--settings", nargs="+", choices=SETTINGS, required=True,
+                        help=f"One or more settings to test: {SETTINGS}")
     args = parser.parse_args()
-    QUALITIES = args.qualities
-    asyncio.run(run_all_iterations())
+    asyncio.run(run_all_iterations(args.settings))
