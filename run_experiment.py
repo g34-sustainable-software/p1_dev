@@ -6,7 +6,7 @@ import os
 from playwright.async_api import async_playwright
 
 VIDEO_URL = "https://www.youtube.com/watch?v=d4u4cgxTShU"  # up to 4k, no ads
-EXPERIMENT_DURATION = 60  # how long the video should play in the experiment (in seconds)
+EXPERIMENT_DURATION = 30  # how long the video should play in the experiment (in seconds)
 
 SETTINGS = ["all-off", "stable-volume", "voice-boost", "ambient-mode"]
 
@@ -76,6 +76,12 @@ async def run_experiment(setting: str, output_file: str):
         await page.wait_for_timeout(1000)
     except Exception:
         pass
+
+    # make sure the cookies were accepted
+    try:
+        await page.wait_for_selector('ytd-consent-bump-v2-lightbox', state='hidden', timeout=5000)
+    except Exception:
+        pass  # no overlay, continue
 
     # pause the video
     try:
