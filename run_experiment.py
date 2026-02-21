@@ -6,7 +6,7 @@ import os
 from playwright.async_api import async_playwright
 
 VIDEO_URL = "https://www.youtube.com/watch?v=d4u4cgxTShU"  # up to 4k, no ads
-EXPERIMENT_DURATION = 30  # how long the video should play in the experiment (in seconds)
+EXPERIMENT_DURATION = 60  # how long the video should play in the experiment (in seconds)
 
 SETTINGS = ["all-off", "stable-volume", "voice-boost", "ambient-mode"]
 
@@ -23,7 +23,7 @@ python run_experiment.py --setting all-off stable-volume voice-boost ambient-mod
 async def run_all_iterations(settings: list[str]):
     settings_list = []
     for s in settings:
-        settings_list.extend([s] * 3)  # this is only 3 for testing, should be 30 # TODO
+        settings_list.extend([s] * 30)  # this is only 3 for testing, should be 30 # TODO
 
     random.shuffle(settings_list)
 
@@ -35,7 +35,7 @@ async def run_all_iterations(settings: list[str]):
         print(f"\n=== Run {i} | Setting: {s} ===")
         await run_experiment(s, output_file)
         print(f"\n=== Finished, sleeping in between ===")
-        await asyncio.sleep(10) # should ne 30 TODO
+        await asyncio.sleep(20) # should ne 30 TODO
 
 
 async def run_experiment(setting: str, output_file: str):
