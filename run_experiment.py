@@ -35,7 +35,7 @@ async def run_all_iterations(settings: list[str]):
         print(f"\n=== Run {i} | Setting: {s} ===")
         await run_experiment(s, output_file)
         print(f"\n=== Finished, sleeping in between ===")
-        await asyncio.sleep(20) # should ne 30 TODO
+        await asyncio.sleep(30) # should ne 30 TODO
 
 
 async def run_experiment(setting: str, output_file: str):
